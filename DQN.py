@@ -5,22 +5,31 @@ import random
 
 
 class Model:
-    def __init__(self, input_size, action_size, learning_rate, memory):
-        self.num_env_space = input_size
+    def __init__(self, input_size, input_flat, action_size, learning_rate, memory):
+        self.wh = input_size
+        self.input_flat = input_flat
         self.num_actions = action_size
         self.memory = memory
 
-        self.input = tf.placeholder(tf.float32, shape=[None, self.num_env_space], name='input')
+        self.input = tf.placeholder(tf.float32, shape=[None, self.input_flat], name='input')
         self.actions = tf.placeholder(tf.float32, shape=[None, self.num_actions], name='actions')
         self.rewards = tf.placeholder(tf.float32, shape=[None], name='rewards')
+
+        x_image = tf.reshape(self.input, [-1, self.wh, self.wh, 1])
 
         init = tf.truncated_normal_initializer()
 
         # create the network
-        net = self.input
+        net = x_image
+
+        net = tf.layers.conv2d(inputs=net, filters=16, kernel_size=5, padding='same', activation=tf.nn.relu)
+        # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=5, padding='same', activation=tf.nn.relu)
+        # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=16, padding='same', activation=tf.nn.relu)
+
+        net = tf.contrib.layers.flatten(net)
+
         net = tf.layers.dense(inputs=net, units=20, activation=tf.nn.relu, kernel_initializer=init, name='dense1')
-        # net = tf.layers.dense(inputs=net, units=100, activation=tf.nn.relu, kernel_initializer=init, name='dense2')
-        # net = tf.layers.dense(inputs=net, units=100, activation=tf.nn.relu, kernel_initializer=init, name='dense3')
+
         net = tf.layers.dense(inputs=net, units=self.num_actions, activation=None, kernel_initializer=init)
 
         self.output = net
@@ -29,7 +38,7 @@ class Model:
         loss = tf.reduce_mean(tf.squared_difference(self.rewards, q_reward))
         self.optimiser = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
-        self.session = tf.Session()
+        self.session = tf.Session(config=tf.ConfigProto(log_device_placement=True))
         self.session.run(tf.global_variables_initializer())
 
     def train(self):

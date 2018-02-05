@@ -9,9 +9,9 @@ from pysc2.lib import features
 from DQN import ReplayMemory
 from DQN import Model
 
+import random
 import matplotlib.pyplot as plt
 import numpy as np
-np.set_printoptions(threshold='nan')
 
 _PLAYER_RELATIVE = features.SCREEN_FEATURES.player_relative.index
 _PLAYER_FRIENDLY = 1
@@ -46,7 +46,7 @@ available_actions = [
     # _SELECT_RECT,
     # _SELECT_CONTROL_GROUP,
     # _STOP_QUICK,
-    # _SELECT_ARMY,
+    _SELECT_ARMY,
     # _ATTACK_SCREEN,
     _MOVE_SCREEN,
     # _MOVE_MINIMAP,
@@ -58,25 +58,29 @@ available_actions = [
     # _SMART_MINIMAP
 ]
 
+actions_num = [0, 7, 331]
+
 
 class MoveToBeacon(base_agent.BaseAgent):
     """An agent specifically for solving the MoveToBeacon map."""
     def __init__(self):
         super(MoveToBeacon, self).__init__()
-        self.num_actions = len(available_actions)
-        self.num_input = 84 * 84  # Size of the screen
-        self.batch_size = 32
-        self.max_memory_size = 10000
-        self.gamma = 1.
+        self.num_actions = len(actions_num)
+        self.input_flat = 84*84  # Size of the screen
+        self.wh = 84
+        self.batch_size = 16
+        self.max_memory_size = 2000
+        self.gamma = .97
         self.learning_rate = 1e-4
         self.epsilon = 1.
         self.final_epsilon = .02
-        self.epsilon_decay = 0.9999
+        self.epsilon_decay = 0.999
         self.total_rewards = []
         self.current_reward = 0
+        self.actions_taken = [0, 0, 0]
 
         self.memory = ReplayMemory(self.num_actions, self.batch_size, self.max_memory_size, self.gamma)
-        self.model = Model(self.num_input, self.num_actions, self.learning_rate, self.memory)
+        self.model = Model(self.wh, self.input_flat, self.num_actions, self.learning_rate, self.memory)
 
     def step(self, obs):
 
@@ -85,37 +89,48 @@ class MoveToBeacon(base_agent.BaseAgent):
         current_state = player_relative.flatten()
 
         super(MoveToBeacon, self).step(obs)
-        # for now it will always select the army
-        if _MOVE_SCREEN in obs.observation['available_actions']:
 
-            # Here we will attempt to choose the correct action and just the rest to script the "MOVE_SCREEN" action
-            action = self.model.get_action(current_state, self.epsilon)
-            # print('Action taken: {}'.format(action))
-            reward = obs.reward
-            done = obs.last()
-            self.current_reward += reward
-            if done:
-                self.total_rewards.append(self.current_reward)
-                print('Reward: {}'.format(self.current_reward))
-                print('Epsilon: {}'.format(self.epsilon))
-                self.current_reward = 0
-            if self.steps > 49999:
-                plt.plot(self.total_rewards)
-                plt.show()
+        legal_actions = obs.observation['available_actions']
 
-            self.memory.add(current_state, action, reward, done)
+        if random.random() < self.epsilon:
+            output = [action for action in actions_num if action in legal_actions]
+            random_action = output[random.randint(0, len(output) - 1)]
+            action = actions_num.index(random_action)
+        else:
+            feed_dict = {self.model.input: [current_state]}
+            output = self.model.session.run(self.model.output, feed_dict)[0]
+            output = [value if action in legal_actions else -9e10 for action, value in zip(actions_num, output)]
+            action = np.argmax(output)
+            self.actions_taken[int(action)] += 1
 
-            # no op
-            if action == 0:
-                return actions.FunctionCall(_NO_OP, [])
+        # print('Action taken: {}'.format(action))
+        reward = obs.reward
+        done = obs.last()
+        self.current_reward += reward
+        if done:
+            self.total_rewards.append(self.current_reward)
+            print('Reward: {}'.format(self.current_reward))
+            print('Epsilon: {}'.format(self.epsilon))
+            print('Timesteps: {}'.format(self.steps))
+            self.current_reward = 0
+        #if self.steps > 49999:
+        #    print('Highest: {} | Lowest: {} | Average: {}'.format(max(self.total_rewards), min(self.total_rewards), np.mean(self.total_rewards)))
+        #    # plt.bar(3, self.actions_taken, 1/1.5, color="blue")
+        #    print(self.actions_taken)
+        #    plt.plot(self.total_rewards)
+        #    plt.show()
 
+        if self.epsilon > self.final_epsilon:
+            self.epsilon = self.epsilon * self.epsilon_decay
+
+        self.memory.add(current_state, action, reward, done)
+        if available_actions[action] == _NO_OP:
+            return actions.FunctionCall(_NO_OP, [])
+        elif available_actions[action] == _SELECT_ARMY:
+            return actions.FunctionCall(_SELECT_ARMY, [_SELECT_ALL])
+        elif available_actions[action] == _MOVE_SCREEN:
             # This is the scripted one
             neutral_y, neutral_x = (player_relative == _PLAYER_NEUTRAL).nonzero()  # Get the location of the beacon
             target = [int(neutral_x.mean()), int(neutral_y.mean())]
-
-            if self.epsilon > self.final_epsilon:
-                self.epsilon = self.epsilon * self.epsilon_decay
-
             return actions.FunctionCall(available_actions[action], [_NOT_QUEUED, target])
-        else:
-            return actions.FunctionCall(_SELECT_ARMY, [_SELECT_ALL])
+
