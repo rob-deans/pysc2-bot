@@ -5,13 +5,15 @@ import random
 
 
 class Model:
-    def __init__(self, input_size, input_flat, action_size, learning_rate, memory):
+    def __init__(self, input_size, input_flat, army_input, action_size, learning_rate, memory):
         self.wh = input_size
         self.input_flat = input_flat
+        self.army_input = army_input
         self.num_actions = action_size
         self.memory = memory
 
         self.screen_input = tf.placeholder(tf.float32, shape=[None, self.input_flat], name='input')
+        self.army_input = tf.placeholder(tf.float32, shape=[None, 1], name='army_input')
         self.actions = tf.placeholder(tf.float32, shape=[None, self.num_actions], name='actions')
         self.rewards = tf.placeholder(tf.float32, shape=[None], name='rewards')
 
@@ -23,12 +25,16 @@ class Model:
         net = x_image
 
         net = tf.layers.conv2d(inputs=net, filters=16, kernel_size=5, padding='same', activation=tf.nn.relu)
-        # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=5, padding='same', activation=tf.nn.relu)
+        net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=5, padding='same', activation=tf.nn.relu)
         # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=16, padding='same', activation=tf.nn.relu)
 
         net = tf.contrib.layers.flatten(net)
 
-        net = tf.layers.dense(inputs=net, units=64, activation=tf.nn.relu, kernel_initializer=init, name='dense1')
+        x_army = tf.layers.dense(inputs=self.army_input, units=9, activation=tf.nn.relu, kernel_initializer=init)
+
+        dense_1 = tf.concat([net, x_army], 1)
+
+        net = tf.layers.dense(inputs=dense_1, units=64, activation=tf.nn.relu, kernel_initializer=init, name='dense1')
 
         net = tf.layers.dense(inputs=net, units=self.num_actions, activation=None, kernel_initializer=init)
 
@@ -44,8 +50,8 @@ class Model:
     def train(self):
         if len(self.memory.memory) < self.memory.batch_size:
             return
-        states, actions, rewards = self.memory.get_batch(self, self.memory.batch_size)
-        self.session.run(self.optimiser, feed_dict={self.screen_input: states, self.actions: actions, self.rewards: rewards})
+        states, army_selected, actions, rewards = self.memory.get_batch(self, self.memory.batch_size)
+        self.session.run(self.optimiser, feed_dict={self.screen_input: states, self.army_input: army_selected, self.actions: actions, self.rewards: rewards})
 
     def get_action(self, state, epsilon):
         if random.random() < epsilon:
@@ -56,8 +62,8 @@ class Model:
 
         return action
 
-    def get_batch_action(self, states):
-        return self.session.run(self.output, feed_dict={self.screen_input: states})
+    def get_batch_action(self, states, army_selected):
+        return self.session.run(self.output, feed_dict={self.screen_input: states, self.army_input: army_selected})
 
 
 class ReplayMemory:
@@ -82,13 +88,14 @@ class ReplayMemory:
 
     def get_batch(self, model, batch_size=50):
         mini_batch = random.sample(self.memory, batch_size)
-        states = [item[0] for item in mini_batch]
+        states = [item[0][0] for item in mini_batch]
+        army_selected = [item[0][1] for item in mini_batch]
         actions = [item[1] for item in mini_batch]
         rewards = [item[2] for item in mini_batch]
         done = [item[3] for item in mini_batch]
-        next_states = [item[4] for item in mini_batch]
+        next_states = [item[4][0] for item in mini_batch]
 
-        q_values = model.get_batch_action(next_states)
+        q_values = model.get_batch_action(next_states, army_selected)
         y_batch = []
 
         for i in range(batch_size):
@@ -97,5 +104,5 @@ class ReplayMemory:
             else:
                 y_batch.append(rewards[i] + self.gamma * np.max(q_values[i]))
 
-        return states, actions, y_batch
+        return states, army_selected, actions, y_batch
 

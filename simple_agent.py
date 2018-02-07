@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _PLAYER_RELATIVE = features.SCREEN_FEATURES.player_relative.index
+_SELECT = features.SCREEN_FEATURES.selected.index
 _PLAYER_FRIENDLY = 1
 _PLAYER_NEUTRAL = 3  # beacon/minerals
 _PLAYER_HOSTILE = 4
@@ -80,12 +81,13 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.actions_taken = [0, 0, 0]
 
         self.memory = ReplayMemory(self.num_actions, self.batch_size, self.max_memory_size, self.gamma)
-        self.model = Model(self.wh, self.input_flat, self.num_actions, self.learning_rate, self.memory)
+        self.model = Model(self.wh, self.input_flat, 1, self.num_actions, self.learning_rate, self.memory)
 
     def step(self, obs):
         # Current observable state
         player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
         current_state = player_relative.flatten()
+        army_selected = np.array([1]) if 1 in obs.observation['screen'][_SELECT] else np.array([0])
 
         super(MoveToBeacon, self).step(obs)
 
@@ -96,7 +98,7 @@ class MoveToBeacon(base_agent.BaseAgent):
             random_action = output[random.randint(0, len(output) - 1)]
             action = actions_num.index(random_action)
         else:
-            feed_dict = {self.model.screen_input: [current_state]}
+            feed_dict = {self.model.screen_input: [current_state], self.model.army_input: [army_selected]}
             output = self.model.session.run(self.model.output, feed_dict)[0]
             output = [value if action in legal_actions else -9e10 for action, value in zip(actions_num, output)]
             action = np.argmax(output)
@@ -126,7 +128,7 @@ class MoveToBeacon(base_agent.BaseAgent):
         if self.epsilon > self.final_epsilon:
             self.epsilon = self.epsilon * self.epsilon_decay
 
-        self.memory.add(current_state, action, reward, done)
+        self.memory.add([current_state, army_selected], action, reward, done)
         self.model.train()
 
         if available_actions[action] == _NO_OP:
