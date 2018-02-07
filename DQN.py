@@ -11,11 +11,11 @@ class Model:
         self.num_actions = action_size
         self.memory = memory
 
-        self.input = tf.placeholder(tf.float32, shape=[None, self.input_flat], name='input')
+        self.screen_input = tf.placeholder(tf.float32, shape=[None, self.input_flat], name='input')
         self.actions = tf.placeholder(tf.float32, shape=[None, self.num_actions], name='actions')
         self.rewards = tf.placeholder(tf.float32, shape=[None], name='rewards')
 
-        x_image = tf.reshape(self.input, [-1, self.wh, self.wh, 1])
+        x_image = tf.reshape(self.screen_input, [-1, self.wh, self.wh, 1])
 
         init = tf.truncated_normal_initializer()
 
@@ -23,12 +23,12 @@ class Model:
         net = x_image
 
         net = tf.layers.conv2d(inputs=net, filters=16, kernel_size=5, padding='same', activation=tf.nn.relu)
-        # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=5, padding='same', activation=tf.nn.relu)
+        net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=5, padding='same', activation=tf.nn.relu)
         # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=16, padding='same', activation=tf.nn.relu)
 
         net = tf.contrib.layers.flatten(net)
 
-        net = tf.layers.dense(inputs=net, units=20, activation=tf.nn.relu, kernel_initializer=init, name='dense1')
+        net = tf.layers.dense(inputs=net, units=64, activation=tf.nn.relu, kernel_initializer=init, name='dense1')
 
         net = tf.layers.dense(inputs=net, units=self.num_actions, activation=None, kernel_initializer=init)
 
@@ -45,19 +45,19 @@ class Model:
         if len(self.memory.memory) < self.memory.batch_size:
             return
         states, actions, rewards = self.memory.get_batch(self, self.memory.batch_size)
-        self.session.run(self.optimiser, feed_dict={self.input: states, self.actions: actions, self.rewards: rewards})
+        self.session.run(self.optimiser, feed_dict={self.screen_input: states, self.actions: actions, self.rewards: rewards})
 
     def get_action(self, state, epsilon):
         if random.random() < epsilon:
             action = random.randint(0, self.num_actions - 1)
         else:
-            temp = self.session.run(self.output, feed_dict={self.input: [state]})[0]
+            temp = self.session.run(self.output, feed_dict={self.screen_input: [state]})[0]
             action = np.argmax(temp)
 
         return action
 
     def get_batch_action(self, states):
-        return self.session.run(self.output, feed_dict={self.input: states})
+        return self.session.run(self.output, feed_dict={self.screen_input: states})
 
 
 class ReplayMemory:
