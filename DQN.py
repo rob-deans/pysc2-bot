@@ -23,7 +23,7 @@ class Model:
         net = x_image
 
         net = tf.layers.conv2d(inputs=net, filters=16, kernel_size=5, padding='same', activation=tf.nn.relu)
-        net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=5, padding='same', activation=tf.nn.relu)
+        # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=5, padding='same', activation=tf.nn.relu)
         # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=16, padding='same', activation=tf.nn.relu)
 
         net = tf.contrib.layers.flatten(net)
