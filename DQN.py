@@ -25,8 +25,7 @@ class Model:
         net = x_image
 
         net = tf.layers.conv2d(inputs=net, filters=16, kernel_size=5, padding='same', activation=tf.nn.relu)
-        net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=5, padding='same', activation=tf.nn.relu)
-        # net = tf.layers.conv2d(inputs=net, filters=36, kernel_size=16, padding='same', activation=tf.nn.relu)
+        net = tf.layers.conv2d(inputs=net, filters=32, kernel_size=5, padding='same', activation=tf.nn.relu)
 
         net = tf.contrib.layers.flatten(net)
 
@@ -51,7 +50,12 @@ class Model:
         if len(self.memory.memory) < self.memory.batch_size:
             return
         states, army_selected, actions, rewards = self.memory.get_batch(self, self.memory.batch_size)
-        self.session.run(self.optimiser, feed_dict={self.screen_input: states, self.army_input: army_selected, self.actions: actions, self.rewards: rewards})
+        self.session.run(self.optimiser, feed_dict={
+            self.screen_input: states,
+            self.army_input: army_selected,
+            self.actions: actions,
+            self.rewards: rewards}
+                         )
 
     def get_action(self, state, epsilon):
         if random.random() < epsilon:

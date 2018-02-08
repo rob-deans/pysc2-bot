@@ -69,7 +69,7 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.num_actions = len(actions_num)
         self.input_flat = 84*84  # Size of the screen
         self.wh = 84
-        self.batch_size = 50
+        self.batch_size = 32
         self.max_memory_size = 5000
         self.gamma = .97
         self.learning_rate = 1e-4
