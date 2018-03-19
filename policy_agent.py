@@ -6,8 +6,8 @@ from pysc2.agents import base_agent
 from pysc2.lib import actions
 from pysc2.lib import features
 
-from DQN import ReplayMemory
-from DQN import Model
+from policy import ReplayMemory
+from policy import Model
 
 import random
 import matplotlib.pyplot as plt
@@ -69,21 +69,35 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.num_actions = len(actions_num)
         self.input_flat = 84*84  # Size of the screen
         self.wh = 84
-        self.batch_size = 32
-        self.max_memory_size = 5000
-        self.gamma = .97
-        self.learning_rate = 1e-4
-        self.epsilon = 1.
-        self.final_epsilon = .05
-        self.epsilon_decay = 0.999
+        self.batch_size = 10
+        self.gamma = .99
+        self.learning_rate = 1e-3
+        self.run = 0
+
+        self.actions = []
+        self.states = []
+        self.army_state = []
+
+        # Stat count
         self.total_rewards = []
         self.current_reward = 0
         self.actions_taken = [0, 0, 0]
+        self.rewards = []
 
-        self.memory = ReplayMemory(self.num_actions, self.batch_size, self.max_memory_size, self.gamma)
+        self.memory = ReplayMemory()
         self.model = Model(self.wh, self.input_flat, 1, self.num_actions, self.learning_rate, self.memory)
-        if self.model.loaded_model:
-            self.epsilon = 0.05
+
+    def discount_rewards(self, r):
+        """ take 1D float array of rewards and compute discounted reward """
+        discounted_r = np.zeros_like(r)
+        running_add = 0
+        for t in reversed(range(0, len(r))):
+            running_add = running_add * self.gamma + r[t]
+            discounted_r[t] = running_add
+        return discounted_r
+
+    def process_rewards(self, reward):
+        return [reward] * 240
 
     def step(self, obs):
         # Current observable state
@@ -93,47 +107,67 @@ class MoveToBeacon(base_agent.BaseAgent):
 
         super(MoveToBeacon, self).step(obs)
 
+        if obs.first():
+            del self.states[:]
+            del self.actions[:]
+            del self.army_state[:]
+            del self.rewards[:]
+
         legal_actions = obs.observation['available_actions']
 
-        if random.random() < self.epsilon:
-            output = [action for action in actions_num if action in legal_actions]
-            random_action = output[random.randint(0, len(output) - 1)]
-            action = actions_num.index(random_action)
-        else:
-            feed_dict = {self.model.screen_input: [current_state], self.model.army_input: [army_selected]}
-            output = self.model.session.run(self.model.output, feed_dict)[0]
-            output = [value if action in legal_actions else -9e10 for action, value in zip(actions_num, output)]
-            action = np.argmax(output)
-            self.actions_taken[int(action)] += 1
+        feed_dict = {self.model.screen_input: [current_state], self.model.army_input: [army_selected]}
 
-        # print('Action taken: {}'.format(action))
-        reward = obs.reward
-        done = False
-        if reward == 1:
-            done = True
+        output = self.model.session.run(self.model.output, feed_dict)[0]
+        out = redistribute(output, legal_actions)
+        action = int(np.argmax(np.random.multinomial(1, out / (1 + 1e-6))))
 
-        self.current_reward += reward
+        self.actions_taken[int(action)] += 1
+
+        self.states.append(current_state)
+        self.army_state.append(army_selected)
+        actions_oh = np.zeros(3)
+        actions_oh[action] = 1
+        self.actions.append(actions_oh)
+
+        # reward = obs.reward
+        self.rewards.append(obs.reward)
+        self.current_reward += obs.reward
+        if obs.reward == 1 or obs.last():
+
+            # if self.current_reward == 0:
+            #     reward = -1
+
+            # rewards = [reward] * len(self.actions)
+            rewards_discounted = self.discount_rewards(self.rewards)
+            self.memory.add(self.states, self.army_state, self.actions, rewards_discounted)
+            # Delete all the actions and states ready for more to be appended
+            del self.states[:]
+            del self.actions[:]
+            del self.army_state[:]
+            del self.rewards[:]
+            if self.episodes % self.batch_size == 0 and self.episodes > 0:
+                self.model.train()
+
         if obs.last():
+
+            # Printing out the stats
             self.total_rewards.append(self.current_reward)
             self.current_reward = 0
             if self.episodes % 100 == 0 and self.episodes > 0:
-                self.model.save()
-                print('Highest: {} | Lowest: {} | Average: {}'.format(
-                    max(self.total_rewards[-100:]),
-                    min(self.total_rewards[-100:]),
-                    np.mean(self.total_rewards[-100:]))
+                print('Highest: {} | Lowest: {} | Average: {} | Time steps: {}'.format(
+                        max(self.total_rewards[-100:]),
+                        min(self.total_rewards[-100:]),
+                        np.mean(self.total_rewards[-100:]),
+                        self.steps
+                    )
                 )
                 print(self.actions_taken)
             if self.episodes % 1000 == 0 and self.episodes > 0:
                 plt.plot(self.total_rewards)
                 plt.show()
+        # End stats #
 
-        if self.epsilon > self.final_epsilon:
-            self.epsilon = self.epsilon * self.epsilon_decay
-
-        self.memory.add([current_state, army_selected], action, reward, done)
-        self.model.train()
-
+        # The group of actions to take
         if available_actions[action] == _NO_OP:
             return actions.FunctionCall(_NO_OP, [])
         elif available_actions[action] == _SELECT_ARMY:
@@ -143,3 +177,13 @@ class MoveToBeacon(base_agent.BaseAgent):
             neutral_y, neutral_x = (player_relative == _PLAYER_NEUTRAL).nonzero()  # Get the location of the beacon
             target = [int(neutral_x.mean()), int(neutral_y.mean())]
             return actions.FunctionCall(available_actions[action], [_NOT_QUEUED, target])
+
+
+# Defines if we have the potential of picking an illegal action and how we redistribute the probabilities
+def redistribute(output, legal_actions):
+    if 331 not in legal_actions and output[2] != 0:
+        output[2] = 0
+        output[:2] /= sum(output)
+    return output
+
+
