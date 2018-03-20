@@ -42,36 +42,34 @@ _SMART_MINIMAP = actions.FUNCTIONS.Smart_minimap.id
 # All the available actions
 available_actions = [
     _NO_OP,
-    # _MOVE_CAMERA,
-    # _SELECT_POINT,
-    # _SELECT_RECT,
-    # _SELECT_CONTROL_GROUP,
-    # _STOP_QUICK,
+    _MOVE_CAMERA,
+    _SELECT_POINT,
+    _SELECT_RECT,
+    _SELECT_CONTROL_GROUP,
+    _STOP_QUICK,
     _SELECT_ARMY,
-    # _ATTACK_SCREEN,
+    _ATTACK_SCREEN,
     _MOVE_SCREEN,
-    # _MOVE_MINIMAP,
-    # _PATROL_SCREEN,
-    # _PATROL_MINIMAP,
-    # _ATTACK_MINIMAP,
-    # _HOLD_POSITION_QUICK,
-    # _SMART_SCREEN,
-    # _SMART_MINIMAP
+    _MOVE_MINIMAP,
+    _PATROL_SCREEN,
+    _PATROL_MINIMAP,
+    _ATTACK_MINIMAP,
+    _HOLD_POSITION_QUICK,
+    _SMART_SCREEN,
+    _SMART_MINIMAP
 ]
-
-actions_num = [0, 7, 331]
 
 
 class MoveToBeacon(base_agent.BaseAgent):
     """An agent specifically for solving the MoveToBeacon map."""
     def __init__(self):
         super(MoveToBeacon, self).__init__()
-        self.num_actions = len(actions_num)
+        self.num_actions = len(available_actions)
         self.input_flat = 84*84  # Size of the screen
         self.wh = 84
-        self.batch_size = 10
+        self.batch_size = 20
         self.gamma = .99
-        self.learning_rate = 1e-3
+        self.learning_rate = 1e-2
         self.run = 0
 
         self.actions = []
@@ -81,7 +79,7 @@ class MoveToBeacon(base_agent.BaseAgent):
         # Stat count
         self.total_rewards = []
         self.current_reward = 0
-        self.actions_taken = [0, 0, 0]
+        self.actions_taken = np.zeros(self.num_actions)
         self.rewards = []
 
         self.memory = ReplayMemory()
@@ -95,9 +93,6 @@ class MoveToBeacon(base_agent.BaseAgent):
             running_add = running_add * self.gamma + r[t]
             discounted_r[t] = running_add
         return discounted_r
-
-    def process_rewards(self, reward):
-        return [reward] * 240
 
     def step(self, obs):
         # Current observable state
@@ -119,20 +114,23 @@ class MoveToBeacon(base_agent.BaseAgent):
 
         output = self.model.session.run(self.model.output, feed_dict)[0]
         out = redistribute(output, legal_actions)
-        action = int(np.argmax(np.random.multinomial(1, out / (1 + 1e-6))))
+        try:
+            action = int(np.argmax(np.random.multinomial(1, out)))
+        except ValueError:
+            action = int(np.argmax(np.random.multinomial(1, out / (1 + 1e-6))))
 
         self.actions_taken[int(action)] += 1
 
         self.states.append(current_state)
         self.army_state.append(army_selected)
-        actions_oh = np.zeros(3)
+        actions_oh = np.zeros(self.num_actions)
         actions_oh[action] = 1
         self.actions.append(actions_oh)
 
         # reward = obs.reward
         self.rewards.append(obs.reward)
         self.current_reward += obs.reward
-        if obs.reward == 1 or obs.last():
+        if obs.last():
 
             # if self.current_reward == 0:
             #     reward = -1
@@ -163,8 +161,9 @@ class MoveToBeacon(base_agent.BaseAgent):
                 )
                 print(self.actions_taken)
             if self.episodes % 1000 == 0 and self.episodes > 0:
-                plt.plot(self.total_rewards)
-                plt.show()
+                pass
+                # plt.plot(self.total_rewards)
+                # plt.show()
         # End stats #
 
         # The group of actions to take
@@ -172,18 +171,26 @@ class MoveToBeacon(base_agent.BaseAgent):
             return actions.FunctionCall(_NO_OP, [])
         elif available_actions[action] == _SELECT_ARMY:
             return actions.FunctionCall(_SELECT_ARMY, [_SELECT_ALL])
-        elif available_actions[action] == _MOVE_SCREEN:
+        elif available_actions[action] == _ATTACK_SCREEN or available_actions[action] == _MOVE_SCREEN or available_actions[action] == _PATROL_SCREEN or available_actions[action] == _SMART_SCREEN:
             # This is the scripted one
             neutral_y, neutral_x = (player_relative == _PLAYER_NEUTRAL).nonzero()  # Get the location of the beacon
             target = [int(neutral_x.mean()), int(neutral_y.mean())]
             return actions.FunctionCall(available_actions[action], [_NOT_QUEUED, target])
+        else:
+            return actions.FunctionCall(_NO_OP, [])
 
 
 # Defines if we have the potential of picking an illegal action and how we redistribute the probabilities
 def redistribute(output, legal_actions):
-    if 331 not in legal_actions and output[2] != 0:
-        output[2] = 0
-        output[:2] /= sum(output)
+    for i, action in enumerate(available_actions):
+        if action not in legal_actions:
+            output[i] = 0
+    if sum(output) == 0:
+        for i, a in enumerate(available_actions):
+            if a in legal_actions:
+                output[i] = float(1/len(legal_actions))
+    else:
+        output /= sum(output) + 1e-6
     return output
 
 

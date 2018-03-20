@@ -22,8 +22,8 @@ class Model:
         # create the network
         net = x_image
 
+        net = tf.layers.conv2d(inputs=net, filters=8, kernel_size=5, padding='same', activation=tf.nn.relu)
         net = tf.layers.conv2d(inputs=net, filters=16, kernel_size=5, padding='same', activation=tf.nn.relu)
-        net = tf.layers.conv2d(inputs=net, filters=32, kernel_size=5, padding='same', activation=tf.nn.relu)
 
         net = tf.contrib.layers.flatten(net)
 
@@ -41,7 +41,7 @@ class Model:
 
         logits = tf.contrib.layers.fully_connected(
             inputs=hidden1,
-            num_outputs=3,
+            num_outputs=self.num_actions,
             activation_fn=tf.nn.softmax
         )
         # logits = tf.layers.dense(inputs=net, units=self.num_actions, activation=tf.nn.softmax, kernel_initializer=init)
