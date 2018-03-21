@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _PLAYER_RELATIVE = features.SCREEN_FEATURES.player_relative.index
+_MM_PLAYER_RELATIVE = features.MINIMAP_FEATURES.player_relative.index
 _SELECT = features.SCREEN_FEATURES.selected.index
 _PLAYER_FRIENDLY = 1
 _PLAYER_NEUTRAL = 3  # beacon/minerals
@@ -65,15 +66,20 @@ class MoveToBeacon(base_agent.BaseAgent):
     def __init__(self):
         super(MoveToBeacon, self).__init__()
         self.num_actions = len(available_actions)
+        # Screen sizes
         self.input_flat = 84*84  # Size of the screen
         self.wh = 84
-        self.batch_size = 20
+        # Minimap sizes
+        self.mm_input_flat = 64*64
+        self.mm_wh = 64
+
+        self.batch_size = 15
         self.gamma = .99
         self.learning_rate = 1e-2
-        self.run = 0
 
         self.actions = []
         self.states = []
+        self.minimap_states = []
         self.army_state = []
 
         # Stat count
@@ -83,7 +89,8 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.rewards = []
 
         self.memory = ReplayMemory()
-        self.model = Model(self.wh, self.input_flat, 1, self.num_actions, self.learning_rate, self.memory)
+        self.model = Model(self.wh, self.input_flat, self.mm_wh, self.mm_input_flat,
+                           1, self.num_actions, self.learning_rate, self.memory)
 
     def discount_rewards(self, r):
         """ take 1D float array of rewards and compute discounted reward """
@@ -96,21 +103,28 @@ class MoveToBeacon(base_agent.BaseAgent):
 
     def step(self, obs):
         # Current observable state
-        player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
-        current_state = player_relative.flatten()
+        screen_player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
+        current_state = screen_player_relative.flatten()
+        # The minimap
+        mm_player_relative = obs.observation['minimap'][_MM_PLAYER_RELATIVE]
+        minimap_state = mm_player_relative.flatten()
+
         army_selected = np.array([1]) if 1 in obs.observation['screen'][_SELECT] else np.array([0])
 
         super(MoveToBeacon, self).step(obs)
 
         if obs.first():
             del self.states[:]
+            del self.minimap_states[:]
             del self.actions[:]
             del self.army_state[:]
             del self.rewards[:]
 
         legal_actions = obs.observation['available_actions']
 
-        feed_dict = {self.model.screen_input: [current_state], self.model.army_input: [army_selected]}
+        feed_dict = {self.model.screen_input: [current_state],
+                     self.model.minimap_input: [minimap_state],
+                     self.model.army_input: [army_selected]}
 
         output = self.model.session.run(self.model.output, feed_dict)[0]
         out = redistribute(output, legal_actions)
@@ -122,7 +136,9 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.actions_taken[int(action)] += 1
 
         self.states.append(current_state)
+        self.minimap_states.append(minimap_state)
         self.army_state.append(army_selected)
+
         actions_oh = np.zeros(self.num_actions)
         actions_oh[action] = 1
         self.actions.append(actions_oh)
@@ -137,7 +153,7 @@ class MoveToBeacon(base_agent.BaseAgent):
 
             # rewards = [reward] * len(self.actions)
             rewards_discounted = self.discount_rewards(self.rewards)
-            self.memory.add(self.states, self.army_state, self.actions, rewards_discounted)
+            self.memory.add(self.states, self.minimap_states, self.army_state, self.actions, rewards_discounted)
             # Delete all the actions and states ready for more to be appended
             del self.states[:]
             del self.actions[:]
@@ -171,9 +187,23 @@ class MoveToBeacon(base_agent.BaseAgent):
             return actions.FunctionCall(_NO_OP, [])
         elif available_actions[action] == _SELECT_ARMY:
             return actions.FunctionCall(_SELECT_ARMY, [_SELECT_ALL])
-        elif available_actions[action] == _ATTACK_SCREEN or available_actions[action] == _MOVE_SCREEN or available_actions[action] == _PATROL_SCREEN or available_actions[action] == _SMART_SCREEN:
+        elif available_actions[action] == _ATTACK_SCREEN \
+                or available_actions[action] == _MOVE_SCREEN \
+                or available_actions[action] == _PATROL_SCREEN \
+                or available_actions[action] == _SMART_SCREEN:
             # This is the scripted one
-            neutral_y, neutral_x = (player_relative == _PLAYER_NEUTRAL).nonzero()  # Get the location of the beacon
+            neutral_y, neutral_x = (screen_player_relative == _PLAYER_NEUTRAL).nonzero()
+            target = [int(neutral_x.mean()), int(neutral_y.mean())]
+            return actions.FunctionCall(available_actions[action], [_NOT_QUEUED, target])
+        elif available_actions[action] == _STOP_QUICK:
+            return actions.FunctionCall(available_actions[action], [_NOT_QUEUED])
+        elif available_actions[action] == _HOLD_POSITION_QUICK:
+            return actions.FunctionCall(available_actions[action], [_NOT_QUEUED])
+        elif available_actions[action] == _ATTACK_MINIMAP \
+                or available_actions[action] == _MOVE_MINIMAP \
+                or available_actions[action] == _PATROL_MINIMAP \
+                or available_actions[action] == _SMART_MINIMAP:
+            neutral_y, neutral_x = (mm_player_relative == _PLAYER_NEUTRAL).nonzero()
             target = [int(neutral_x.mean()), int(neutral_y.mean())]
             return actions.FunctionCall(available_actions[action], [_NOT_QUEUED, target])
         else:
@@ -190,7 +220,7 @@ def redistribute(output, legal_actions):
             if a in legal_actions:
                 output[i] = float(1/len(legal_actions))
     else:
-        output /= sum(output) + 1e-6
+        output /= sum(output)
     return output
 
 
