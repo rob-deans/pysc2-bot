@@ -2,7 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from DQN_PARAM import *
+from ac_param import *
 import matplotlib.pyplot as plt
 from collections import deque
 import random
@@ -31,23 +31,27 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.num_actions = 84*84
         self.input_flat = 84*84  # Size of the screen
         self.wh = 84
-        self.batch_size = 50
+
+        self.batch_size = 100
         self.max_memory_size = 5000
-        self.gamma = 1
-        self.learning_rate = 1e-4
-        self.epsilon = 1.
-        self.final_epsilon = .05
-        self.epsilon_decay = 0.9999
+
+        self.gamma = .99
+        self.actor_lr = 1e-4
+        self.critic_lr = 5e-4
+
         self.total_rewards = deque(maxlen=100)
         self.current_reward = 0
 
         self.allow_pick = True
         self.action = 0
 
-        self.memory = ReplayMemory(self.num_actions, self.batch_size, self.max_memory_size, self.gamma)
-        self.model = Model(self.wh, self.input_flat, self.num_actions, self.learning_rate, self.memory)
-        if self.model.loaded_model:
-            self.epsilon = 0.05
+        self.targets = []
+        self.beacons = []
+        self.beacons_store = True
+
+        self.memory = ReplayMemory(self.batch_size, self.max_memory_size)
+        self.model = ActorCriticModelCont(self.wh, self.input_flat, self.num_actions,
+                                          self.actor_lr, self.critic_lr, self.memory, self.gamma)
     """An agent specifically for solving the MoveToBeacon map."""
 
     def step(self, obs):
@@ -57,42 +61,41 @@ class MoveToBeacon(base_agent.BaseAgent):
 
         super(MoveToBeacon, self).step(obs)
 
+        done = False
+
         if _MOVE_SCREEN in obs.observation["available_actions"]:
 
             player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
             neutral_y, neutral_x = (player_relative == _PLAYER_NEUTRAL).nonzero()
+            if self.beacons_store:
+                self.beacons.append([neutral_x, neutral_y])
+                self.beacons_store = False
 
-            if self.steps > 2:
-                if random.random() < self.epsilon:
-                    self.action = random.randint(0, self.num_actions - 1)
-                    self.allow_pick = False
-                else:
-                    feed_dict = {self.model.screen_input: [current_state]}
-                    output = self.model.session.run(self.model.output, feed_dict)[0]
-                    self.action = np.argmax(output)
-                    self.allow_pick = False
-                target_x = self.action // 84
-                target_y = self.action % 84
-            else:
-                target_x = neutral_x.mean()
-                target_y = neutral_y.mean()
-                self.action = int(target_x * 84 + target_y)
+            self.action = self.model.run(current_state)
+            try:
+                action_ = np.argmax(np.random.multinomial(1, self.action))
+            except ValueError:
+                action_ = np.argmax(np.random.multinomial(1, self.action/(1+1e-6)))
+
+            self.allow_pick = False
+            target_x = action_ // 84
+            target_y = action_ % 84
 
             target = [target_x, target_y]
-            print(neutral_x.mean(), neutral_y.mean())
-            print(target)
+            self.targets.append(target)
 
             reward = obs.reward
-            done = False
             if reward == 1:
-                done = True
+                print(target)
+                self.beacons_store = True
                 self.allow_pick = True
 
+            # STATS ONLY
             self.current_reward += reward
             if obs.last():
+                done = True
                 self.allow_pick = True
                 self.total_rewards.append(self.current_reward)
-                self.current_reward = 0
                 if self.episodes % 100 == 0 and self.episodes > 0:
                     self.model.save()
                     print('Highest: {} | Lowest: {} | Average: {} | Timesteps: {}'.format(
@@ -101,17 +104,23 @@ class MoveToBeacon(base_agent.BaseAgent):
                         np.mean(self.total_rewards),
                         self.steps)
                     )
-                # if self.episodes % 1000 == 0 and self.episodes > 0:
-                #     plt.plot(self.total_rewards)
-                #     plt.show()
+                if self.current_reward > 0:
+                    temp = np.array(self.targets)
+                    temp_2 = np.array(self.beacons)
+                    plt.scatter(temp_2[:, 0], temp_2[:, 1])
+                    plt.scatter(temp[:, 0], temp[:, 1])
+                    plt.show()
+                    plt.title('Episode {}'.format(self.episodes))
+                del self.targets[:]
+                del self.beacons[:]
+                self.current_reward = 0
 
             if not neutral_y.any():
                 return actions.FunctionCall(_NO_OP, [])
 
-            if self.epsilon > self.final_epsilon:
-                self.epsilon = self.epsilon * self.epsilon_decay
-
-            self.memory.add(current_state, self.action, reward, done)
+            actions_oh = np.zeros(7056)
+            actions_oh[temp_action] = 1
+            self.memory.add(current_state, actions_oh, reward, done)
             self.model.train()
 
             return actions.FunctionCall(_MOVE_SCREEN, [_NOT_QUEUED, target])
