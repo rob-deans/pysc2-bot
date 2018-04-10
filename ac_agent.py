@@ -6,13 +6,11 @@ from pysc2.agents import base_agent
 from pysc2.lib import actions
 from pysc2.lib import features
 
-from policy import ReplayMemory
-from policy import Model
+from actor_critic import ReplayMemory
+from actor_critic import ActorCriticModel
 
-import random
-import matplotlib.pyplot as plt
 import numpy as np
-import pickle
+from collections import deque
 
 _PLAYER_RELATIVE = features.SCREEN_FEATURES.player_relative.index
 _MM_PLAYER_RELATIVE = features.MINIMAP_FEATURES.player_relative.index
@@ -74,59 +72,46 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.mm_input_flat = 64*64
         self.mm_wh = 64
 
-        self.batch_size = 15
+        self.batch_size = 8
+        self.max_memory_size = 2000
+
         self.gamma = .99
-        self.learning_rate = 1e-2
+        self.actor_lr = 1e-3
+        self.critic_lr = 5e-3
 
         self.actions = []
         self.states = []
-        self.minimap_states = []
         self.army_state = []
 
         # Stat count
-        self.total_rewards = []
-        self.total_actions = []
+        self.total_rewards = deque(maxlen=100)
         self.current_reward = 0
         self.actions_taken = np.zeros(self.num_actions)
         self.rewards = []
 
-        self.memory = ReplayMemory()
-        self.model = Model(self.wh, self.input_flat, self.mm_wh, self.mm_input_flat,
-                           1, self.num_actions, self.learning_rate, self.memory)
-
-    def discount_rewards(self, r):
-        """ take 1D float array of rewards and compute discounted reward """
-        discounted_r = np.zeros_like(r)
-        running_add = 0
-        for t in reversed(range(0, len(r))):
-            running_add = running_add * self.gamma + r[t]
-            discounted_r[t] = running_add
-        return discounted_r
+        self.memory = ReplayMemory(self.batch_size, self.max_memory_size)
+        self.model = ActorCriticModel(self.wh, self.input_flat, self.num_actions, self.actor_lr, self.critic_lr,
+                                      self.memory, self.gamma)
 
     def step(self, obs):
         # Current observable state
         screen_player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
         current_state = screen_player_relative.flatten()
-        # The minimap
         mm_player_relative = obs.observation['minimap'][_MM_PLAYER_RELATIVE]
-        minimap_state = mm_player_relative.flatten()
 
         army_selected = np.array([1]) if 1 in obs.observation['screen'][_SELECT] else np.array([0])
 
+        # if len(self.memory.memory) > 0:
+            # self.memory.update(current_state, army_selected)
+
         super(MoveToBeacon, self).step(obs)
 
-        if obs.first():
-            del self.states[:]
-            del self.minimap_states[:]
-            del self.actions[:]
-            del self.army_state[:]
-            del self.rewards[:]
+        done = False
 
         legal_actions = obs.observation['available_actions']
 
-        feed_dict = {self.model.screen_input: [current_state],
-                     self.model.minimap_input: [minimap_state],
-                     self.model.army_input: [army_selected]}
+        feed_dict = {self.model.input: [current_state],
+                     self.model.army_selected: [army_selected]}
 
         output = self.model.session.run(self.model.output, feed_dict)[0]
         out = redistribute(output, legal_actions)
@@ -136,54 +121,38 @@ class MoveToBeacon(base_agent.BaseAgent):
             action = int(np.argmax(np.random.multinomial(1, out / (1 + 1e-6))))
 
         self.actions_taken[int(action)] += 1
-        self.total_actions.append(action)
 
         self.states.append(current_state)
-        self.minimap_states.append(minimap_state)
         self.army_state.append(army_selected)
 
         actions_oh = np.zeros(self.num_actions)
         actions_oh[action] = 1
         self.actions.append(actions_oh)
 
-        # reward = obs.reward
+        reward = obs.reward
         self.rewards.append(obs.reward)
         self.current_reward += obs.reward
-        if obs.last():
-
-            # if self.current_reward == 0:
-            #     reward = -1
-
-            # rewards = [reward] * len(self.actions)
-            rewards_discounted = self.discount_rewards(self.rewards)
-            self.memory.add(self.states, self.minimap_states, self.army_state, self.actions, rewards_discounted)
-            # Delete all the actions and states ready for more to be appended
-            del self.states[:]
-            del self.actions[:]
-            del self.army_state[:]
-            del self.rewards[:]
-            if self.episodes % self.batch_size == 0 and self.episodes > 0:
-                self.model.train()
 
         if obs.last():
-
+            done = True
+            # self.model.train()
             # Printing out the stats
             self.total_rewards.append(self.current_reward)
             self.current_reward = 0
             if self.episodes % 100 == 0 and self.episodes > 0:
+                self.model.save()
                 print('Highest: {} | Lowest: {} | Average: {} | Time steps: {}'.format(
-                        max(self.total_rewards[-100:]),
-                        min(self.total_rewards[-100:]),
-                        np.mean(self.total_rewards[-100:]),
+                        max(self.total_rewards),
+                        min(self.total_rewards),
+                        np.mean(self.total_rewards),
                         self.steps
                     )
                 )
                 print(self.actions_taken)
-            if self.episodes % 300 == 0 and self.episodes > 0:
-                pickle.dump(self.total_actions, open('/home/rob/Documents/uni/fyp/sc2/policy_actions.pkl', 'wb'))
-                pickle.dump(self.total_rewards, open('/home/rob/Documents/uni/fyp/sc2/policy_rewards.pkl', 'wb'))
-                exit(0)
         # End stats #
+
+        self.memory.add(current_state, army_selected, actions_oh, reward, done)
+        self.model.train()
 
         # The group of actions to take
         if available_actions[action] == _NO_OP:

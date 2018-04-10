@@ -5,7 +5,7 @@ from __future__ import print_function
 from ac_param import *
 import matplotlib.pyplot as plt
 from collections import deque
-import random
+import numpy as np
 
 from pysc2.agents import base_agent
 from pysc2.lib import actions
@@ -32,12 +32,12 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.input_flat = 84*84  # Size of the screen
         self.wh = 84
 
-        self.batch_size = 100
-        self.max_memory_size = 5000
+        self.batch_size = 60
+        self.max_memory_size = 2000
 
         self.gamma = .99
-        self.actor_lr = 1e-4
-        self.critic_lr = 5e-4
+        self.actor_lr = 1e-3
+        self.critic_lr = 5e-3
 
         self.total_rewards = deque(maxlen=100)
         self.current_reward = 0
@@ -89,6 +89,7 @@ class MoveToBeacon(base_agent.BaseAgent):
                 print(target)
                 self.beacons_store = True
                 self.allow_pick = True
+                # self.model.train()
 
             # STATS ONLY
             self.current_reward += reward
@@ -109,8 +110,8 @@ class MoveToBeacon(base_agent.BaseAgent):
                     temp_2 = np.array(self.beacons)
                     plt.scatter(temp_2[:, 0], temp_2[:, 1])
                     plt.scatter(temp[:, 0], temp[:, 1])
-                    plt.show()
                     plt.title('Episode {}'.format(self.episodes))
+                    plt.show()
                 del self.targets[:]
                 del self.beacons[:]
                 self.current_reward = 0
@@ -119,7 +120,7 @@ class MoveToBeacon(base_agent.BaseAgent):
                 return actions.FunctionCall(_NO_OP, [])
 
             actions_oh = np.zeros(7056)
-            actions_oh[temp_action] = 1
+            actions_oh[action_] = 1
             self.memory.add(current_state, actions_oh, reward, done)
             self.model.train()
 

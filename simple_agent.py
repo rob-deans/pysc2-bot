@@ -10,8 +10,8 @@ from DQN import ReplayMemory
 from DQN import Model
 
 import random
-import matplotlib.pyplot as plt
 import numpy as np
+import pickle
 
 _PLAYER_RELATIVE = features.SCREEN_FEATURES.player_relative.index
 _SELECT = features.SCREEN_FEATURES.selected.index
@@ -80,6 +80,8 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.current_reward = 0
         self.actions_taken = [0, 0, 0]
 
+        self.total_actions = []
+
         self.memory = ReplayMemory(self.num_actions, self.batch_size, self.max_memory_size, self.gamma)
         self.model = Model(self.wh, self.input_flat, 1, self.num_actions, self.learning_rate, self.memory)
         if self.model.loaded_model:
@@ -105,6 +107,7 @@ class MoveToBeacon(base_agent.BaseAgent):
             output = [value if action in legal_actions else -9e10 for action, value in zip(actions_num, output)]
             action = np.argmax(output)
             self.actions_taken[int(action)] += 1
+        self.total_actions.append(action)
 
         # print('Action taken: {}'.format(action))
         reward = obs.reward
@@ -125,8 +128,8 @@ class MoveToBeacon(base_agent.BaseAgent):
                 )
                 print(self.actions_taken)
             if self.episodes % 1000 == 0 and self.episodes > 0:
-                plt.plot(self.total_rewards)
-                plt.show()
+                pickle.dump(self.total_actions, open('/home/rob/Documents/uni/fyp/sc2/policy_actions.pkl', 'wb'))
+                pickle.dump(self.total_rewards, open('/home/rob/Documents/uni/fyp/sc2/policy_rewards.pkl', 'wb'))
 
         if self.epsilon > self.final_epsilon:
             self.epsilon = self.epsilon * self.epsilon_decay
