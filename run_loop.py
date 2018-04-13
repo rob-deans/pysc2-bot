@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import sys
 import time
 from pysc2.env import sc2_env
 from absl import flags
@@ -11,7 +12,7 @@ from actor_critic import ActorCriticModel
 FLAGS = flags.FLAGS
 
 
-def run_loop(agent, env, max_frames=0):
+def run_loop(agent, env, max_frames=60):
     """A run loop to have agents and an environment interact."""
     start_time = time.time()
     current_state = env.reset()
@@ -19,13 +20,13 @@ def run_loop(agent, env, max_frames=0):
     try:
         for i in range(max_frames):
             # Take an action
-            action = agent.run(current_state)
+            action = agent.get_action(current_state)
             next_state, reward, done = env.step(action)
             rollout.append([current_state, action, reward, done, next_state])
             current_state = next_state
         yield rollout
-    except KeyboardInterrupt:
-        pass
+    except KeyboardInterrupt as e:
+        print(e)
     finally:
         elapsed_time = time.time() - start_time
         print("Took %.3f seconds" % elapsed_time)
@@ -33,7 +34,7 @@ def run_loop(agent, env, max_frames=0):
 
 def collect_rollout(agent, env):
     rollout = run_loop(agent, env, 60)
-    agent.train(rollout)
+    # agent.train(rollout)
 
 
 def train(agent, env):
@@ -42,12 +43,16 @@ def train(agent, env):
 
 
 if __name__ == '__main__':
-    env = sc2_env.SC2Env(
+    FLAGS(sys.argv)
+    sc_env = sc2_env.SC2Env(
         map_name="MoveToBeacon",
         visualize=False,
         screen_size_px=(84, 84),
-        minimap_size_px=(64, 64)
+        minimap_size_px=(64, 64),
     )
+    # --agent
+    # simple_agent.MoveToBeacon - -map
+    # MoveToBeacon - -max_agent_steps = 1000000 - -norender
 
     num_actions = 16
     # Screen sizes
@@ -64,5 +69,7 @@ if __name__ == '__main__':
     actor_lr = 1e-3
     critic_lr = 5e-3
 
-    agent = ActorCriticModel(wh, input_flat, num_actions, actor_lr, critic_lr, gamma)
+    ac_agent = ActorCriticModel(wh, input_flat, num_actions, actor_lr, critic_lr, gamma)
+
+    train(ac_agent, sc_env)
 

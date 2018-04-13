@@ -81,7 +81,9 @@ class MoveToBeacon(base_agent.BaseAgent):
 
         self.actions = []
         self.states = []
+        self.minimap_states = []
         self.army_state = []
+        self.done = []
 
         # Stat count
         self.total_rewards = deque(maxlen=100)
@@ -90,28 +92,43 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.rewards = []
 
         self.memory = ReplayMemory(self.batch_size, self.max_memory_size)
-        self.model = ActorCriticModel(self.wh, self.input_flat, self.num_actions, self.actor_lr, self.critic_lr,
+        self.model = ActorCriticModel(self.wh, self.input_flat, self.mm_wh, self.mm_input_flat,
+                                      self.num_actions, self.actor_lr, self.critic_lr,
                                       self.memory, self.gamma)
+
+    def discount_rewards(self, r):
+        """ take 1D float array of rewards and compute discounted reward """
+        discounted_r = np.zeros_like(r, dtype=float)
+        running_add = 0.
+        for t in reversed(range(0, len(r))):
+            running_add = float(running_add * self.gamma) + r[t]
+            discounted_r[t] = running_add
+        return discounted_r
 
     def step(self, obs):
         # Current observable state
-        screen_player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
-        current_state = screen_player_relative.flatten()
-        mm_player_relative = obs.observation['minimap'][_MM_PLAYER_RELATIVE]
+        current_state = obs.observation["screen"][_PLAYER_RELATIVE]
+        # current_state = screen_player_relative.flatten()
+        minimap_state = obs.observation['minimap'][_MM_PLAYER_RELATIVE]
+        # minimap_state = mm_player_relative.flatten()
 
-        army_selected = np.array([1]) if 1 in obs.observation['screen'][_SELECT] else np.array([0])
-
-        # if len(self.memory.memory) > 0:
-            # self.memory.update(current_state, army_selected)
+        army_state = obs.observation['screen'][_SELECT]
+        # army_state = army_selected.flatten()
 
         super(MoveToBeacon, self).step(obs)
 
-        done = False
+        if obs.first():
+            del self.states[:]
+            del self.minimap_states[:]
+            del self.actions[:]
+            del self.army_state[:]
+            del self.rewards[:]
 
         legal_actions = obs.observation['available_actions']
 
         feed_dict = {self.model.input: [current_state],
-                     self.model.army_selected: [army_selected]}
+                     self.model.army_selected: [army_state],
+                     self.model.minimap_input: [minimap_state]}
 
         output = self.model.session.run(self.model.output, feed_dict)[0]
         out = redistribute(output, legal_actions)
@@ -123,19 +140,32 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.actions_taken[int(action)] += 1
 
         self.states.append(current_state)
-        self.army_state.append(army_selected)
+        self.minimap_states.append(minimap_state)
+        self.army_state.append(army_state)
 
         actions_oh = np.zeros(self.num_actions)
         actions_oh[action] = 1
         self.actions.append(actions_oh)
 
-        reward = obs.reward
+        # reward = obs.reward
         self.rewards.append(obs.reward)
         self.current_reward += obs.reward
 
         if obs.last():
-            done = True
-            # self.model.train()
+            self.done.append(True)
+
+            # rewards_discounted = self.discount_rewards(self.rewards)
+            self.memory.add([self.states, self.minimap_states, self.army_state],
+                            self.actions, self.rewards, self.done)
+            self.model.train()
+
+            # Delete all the actions and states ready for more to be appended
+            del self.states[:]
+            del self.actions[:]
+            del self.army_state[:]
+            del self.rewards[:]
+            del self.done[:]
+
             # Printing out the stats
             self.total_rewards.append(self.current_reward)
             self.current_reward = 0
@@ -149,10 +179,8 @@ class MoveToBeacon(base_agent.BaseAgent):
                     )
                 )
                 print(self.actions_taken)
-        # End stats #
-
-        self.memory.add(current_state, army_selected, actions_oh, reward, done)
-        self.model.train()
+        else:
+            self.done.append(False)
 
         # The group of actions to take
         if available_actions[action] == _NO_OP:

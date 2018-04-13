@@ -96,7 +96,7 @@ class MoveToBeacon(base_agent.BaseAgent):
 
     def discount_rewards(self, r):
         """ take 1D float array of rewards and compute discounted reward """
-        discounted_r = np.zeros_like(r)
+        discounted_r = np.zeros_like(r, dtype=float)
         running_add = 0
         for t in reversed(range(0, len(r))):
             running_add = running_add * self.gamma + r[t]
@@ -179,9 +179,9 @@ class MoveToBeacon(base_agent.BaseAgent):
                     )
                 )
                 print(self.actions_taken)
-            if self.episodes % 300 == 0 and self.episodes > 0:
-                pickle.dump(self.total_actions, open('/home/rob/Documents/uni/fyp/sc2/policy_actions.pkl', 'wb'))
-                pickle.dump(self.total_rewards, open('/home/rob/Documents/uni/fyp/sc2/policy_rewards.pkl', 'wb'))
+            if self.episodes % 500 == 0 and self.episodes > 0:
+                pickle.dump(self.total_actions, open('/home/rob/Documents/uni/fyp/sc2/policy_actions5.pkl', 'wb'))
+                pickle.dump(self.total_rewards, open('/home/rob/Documents/uni/fyp/sc2/policy_rewards5.pkl', 'wb'))
                 exit(0)
         # End stats #
 
