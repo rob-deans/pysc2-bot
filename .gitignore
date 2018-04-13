@@ -111,3 +111,5 @@ policy/
 pysc2/
 *.meta
 *.index
+checkpoint
+*.data*
