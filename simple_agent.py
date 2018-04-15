@@ -75,7 +75,7 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.mm_wh = 64
 
         self.batch_size = 32
-        self.max_memory_size = 5000
+        self.max_memory_size = 2000
 
         self.gamma = .99
         self.learning_rate = 1e-4
@@ -103,7 +103,12 @@ class MoveToBeacon(base_agent.BaseAgent):
         mm_player_relative = obs.observation['minimap'][_MM_PLAYER_RELATIVE]
         minimap_state = mm_player_relative.flatten()
 
-        army_selected = np.array([1]) if 1 in obs.observation['screen'][_SELECT] else np.array([0])
+        army_state = obs.observation['screen'][_SELECT].flatten()
+        # army_selected = np.array([1]) if 1 in obs.observation['screen'][_SELECT] else np.array([0])
+
+        if len(self.memory.memory) > 0:
+            self.memory.update([current_state, minimap_state, army_state])
+            self.model.train()
 
         super(MoveToBeacon, self).step(obs)
 
@@ -113,8 +118,9 @@ class MoveToBeacon(base_agent.BaseAgent):
             action = legal_actions[random.randint(0, len(legal_actions)) - 1]
             action = available_actions.index(action)
         else:
-            feed_dict = {self.model.screen_input: [current_state], self.model.minimap_input: [minimap_state],
-                         self.model.army_input: [army_selected]}
+            # feed_dict = {self.model.screen_input: [current_state], self.model.minimap_input: [minimap_state],
+            #              self.model.army_input: [army_selected]}
+            feed_dict = {self.model.army_input: [army_state]}
             output = self.model.session.run(self.model.output, feed_dict)[0]
             output = [value if action in legal_actions else -9e10 for action, value in zip(available_actions, output)]
             action = np.argmax(output)
@@ -123,9 +129,6 @@ class MoveToBeacon(base_agent.BaseAgent):
 
         # print('Action taken: {}'.format(action))
         reward = obs.reward
-        done = False
-        if reward == 1:
-            done = True
 
         self.current_reward += reward
         if obs.last():
@@ -140,16 +143,16 @@ class MoveToBeacon(base_agent.BaseAgent):
                     np.mean(self.total_rewards))
                 )
                 print(self.actions_taken)
-            if self.episodes % 1500 == 0 and self.episodes > 0:
-                pickle.dump(self.total_actions, open('/home/rob/Documents/uni/fyp/sc2/actions4.pkl', 'wb'))
-                pickle.dump(self.rewards, open('/home/rob/Documents/uni/fyp/sc2/rewards4.pkl', 'wb'))
+            if self.episodes % 500 == 0 and self.episodes > 0:
+                pickle.dump(self.total_actions, open('/home/rob/Documents/uni/fyp/sc2/actions5.pkl', 'wb'))
+                pickle.dump(self.rewards, open('/home/rob/Documents/uni/fyp/sc2/rewards5.pkl', 'wb'))
                 exit(0)
 
         if self.epsilon > self.final_epsilon:
             self.epsilon = self.epsilon * self.epsilon_decay
 
-        self.memory.add([current_state, minimap_state, army_selected], action, reward, done)
-        self.model.train()
+        self.memory.add([current_state, minimap_state, army_state], action, reward, obs.last())
+        # self.model.train()
 
         if available_actions[action] == _NO_OP:
             return actions.FunctionCall(_NO_OP, [])
