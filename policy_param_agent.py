@@ -2,9 +2,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from ac_param import *
-import matplotlib.pyplot as plt
-from collections import deque
+from policy_param import ReplayMemory
+from policy_param import Model
 import numpy as np
 
 from pysc2.agents import base_agent
@@ -33,27 +32,22 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.num_actions = self.wh ** 2
         self.input_flat = self.wh ** 2  # Size of the screen
 
-        self.batch_size = 32
-        self.max_memory_size = 5000
-
+        self.batch_size = 10
         self.gamma = .99
-        self.actor_lr = 1e-3
-        self.critic_lr = 5e-3
+        self.learning_rate = 1e-3
 
-        self.total_rewards = deque(maxlen=100)
-        self.log_rewards = []
+        self.actions = []
+        self.states = []
+        self.rewards = []
+
+        # Stat count
+        self.total_rewards = []
+        self.total_actions = []
         self.current_reward = 0
+        self.actions_taken = np.zeros(self.num_actions)
 
-        self.allow_pick = True
-        self.action = 0
-
-        self.targets = []
-        self.beacons = []
-        self.beacons_store = True
-
-        self.memory = ReplayMemory(self.batch_size, self.max_memory_size)
-        self.model = ActorCriticModelCont(self.wh, self.input_flat, self.num_actions,
-                                          self.actor_lr, self.critic_lr, self.memory, self.gamma)
+        self.memory = ReplayMemory()
+        self.model = Model(self.input_flat, self.num_actions, self.learning_rate, self.memory)
     """An agent specifically for solving the MoveToBeacon map."""
 
     def step(self, obs):
@@ -64,64 +58,78 @@ class MoveToBeacon(base_agent.BaseAgent):
 
         super(MoveToBeacon, self).step(obs)
 
-        done = False
+        if obs.first():
+            del self.states[:]
+            del self.actions[:]
+            del self.rewards[:]
 
         if _MOVE_SCREEN in obs.observation["available_actions"]:
 
             player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
             neutral_y, neutral_x = (player_relative == _PLAYER_NEUTRAL).nonzero()
-            if self.beacons_store:
-                self.beacons.append([neutral_x, neutral_y])
-                self.beacons_store = False
+            if not neutral_y.any():
+                return actions.FunctionCall(_NO_OP, [])
 
-            self.action = self.model.run(current_state)
+            feed_dict = {self.model.screen_input: [current_state]}
+
+            output = self.model.session.run(self.model.output, feed_dict)[0]
             try:
-                action_ = np.argmax(np.random.multinomial(1, self.action))
+                action_ = np.argmax(np.random.multinomial(1, output))
             except ValueError:
-                action_ = np.argmax(np.random.multinomial(1, self.action/(1+1e-6)))
+                action_ = np.argmax(np.random.multinomial(1, output/(1+1e-6)))
 
-            self.allow_pick = False
             target_x = action_ // 64
             target_y = action_ % 64
 
             target = [target_x, target_y]
             self.targets.append(target)
 
+            self.states.append(current_state)
+            actions_oh = np.zeros(self.num_actions)
+            actions_oh[action_] = 1
+            self.actions.append(actions_oh)
+
             reward = obs.reward
+            self.rewards.append(reward)
+
             if reward == 1:
                 print(target)
-                self.beacons_store = True
-                self.allow_pick = True
-                # self.model.train()
+
+            if obs.last():
+                rewards_discounted = self.discount_rewards(self.rewards)
+                self.memory.add(self.states, self.actions, rewards_discounted)
+                # Delete all the actions and states ready for more to be appended
+                del self.states[:]
+                del self.actions[:]
+                del self.rewards[:]
+                if self.episodes % self.batch_size == 0 and self.episodes > 0:
+                    self.model.train()
 
             # STATS ONLY
             self.current_reward += reward
             if obs.last():
-                done = True
-                self.allow_pick = True
                 self.total_rewards.append(self.current_reward)
                 self.log_rewards.append(self.current_reward)
                 if self.episodes % 100 == 0 and self.episodes > 0:
                     self.model.save()
-                    pickle.dump(self.log_rewards, open('./results.pkl', 'wb'))
+                    pickle.dump(self.log_rewards, open('./policy_results.pkl', 'wb'))
                     print('Highest: {} | Lowest: {} | Average: {} | Timesteps: {}'.format(
                         max(self.total_rewards),
                         min(self.total_rewards),
                         np.mean(self.total_rewards),
                         self.steps)
                     )
-                del self.targets[:]
-                del self.beacons[:]
                 self.current_reward = 0
-
-            if not neutral_y.any():
-                return actions.FunctionCall(_NO_OP, [])
-
-            actions_oh = np.zeros(self.num_actions)
-            actions_oh[action_] = 1
-            self.memory.add(current_state, actions_oh, reward, done)
-            self.model.train()
 
             return actions.FunctionCall(_MOVE_SCREEN, [_NOT_QUEUED, target])
         else:
             return actions.FunctionCall(_SELECT_ARMY, [_SELECT_ALL])
+
+    def discount_rewards(self, r):
+        """ take 1D float array of rewards and compute discounted reward """
+        discounted_r = np.zeros_like(r, dtype=float)
+        running_add = 0
+        for t in reversed(range(0, len(r))):
+            running_add = running_add * self.gamma + r[t]
+            discounted_r[t] = running_add
+        return discounted_r

@@ -54,7 +54,7 @@ available_actions = [
 ]
 
 
-class ActorCriticModel():
+class ActorCriticModel:
     def __init__(self, input_size, input_flat, minimap_size, minimap_flat,
                  action_size, actor_lr, critic_lr, memory, gamma):
         self.wh = input_size
@@ -66,48 +66,35 @@ class ActorCriticModel():
         self.memory = memory
 
         # Generic
-        init = tf.uniform_unit_scaling_initializer
+        init = tf.truncated_normal_initializer(0, 0.01)
 
         # ===================================== #
         #               Actor                   #
         # ===================================== #
 
-        self.input = tf.placeholder(tf.float32, shape=[None, self.wh, self.wh, 3], name='screen_input')
-        self.minimap_input = tf.placeholder(tf.float32, shape=[None, self.mm_wh, self.mm_wh, 3], name='mini_input')
-        self.army_selected = tf.placeholder(tf.float32, shape=[None, self.wh, self.wh, 2], name='army_input')
+        self.input = tf.placeholder(tf.float32, shape=[None, self.input_flat], name='screen_input')
+        self.minimap_input = tf.placeholder(tf.float32, shape=[None, self.minimap_flat], name='mini_input')
+        self.army_selected = tf.placeholder(tf.float32, shape=[None, self.input_flat], name='army_input')
         self.actor_actions = tf.placeholder(tf.float32, shape=[None, self.num_actions], name='actions')
         self.td_error = tf.placeholder(tf.float32, shape=[None, 1], name='rewards')
 
         self.actor_lr = actor_lr
 
-        # image = tf.reshape(self.input, [-1, self.wh, self.wh, 1])
-        # mm_image = tf.reshape(self.minimap_input, [-1, self.mm_wh, self.mm_wh, 1])
-        # a_image = tf.reshape(self.army_selected, [-1, self.wh, self.wh, 1])
+        image = tf.reshape(self.army_selected, [-1, self.wh, self.wh, 1])
 
-        conv_net = tf.layers.conv2d(inputs=self.input, filters=8, kernel_size=5, padding='same', activation=tf.nn.relu)
-        conv_net = tf.layers.conv2d(inputs=conv_net, filters=16, kernel_size=3, padding='same', activation=tf.nn.relu)
-        #
+        conv_net = tf.layers.conv2d(inputs=image, filters=16, kernel_size=5, padding='same', activation=tf.nn.relu)
+        conv_net = tf.layers.conv2d(inputs=conv_net, filters=32, kernel_size=3, padding='same', activation=tf.nn.relu)
+
         conv_net = tf.contrib.layers.flatten(conv_net)
 
-        mm_image = tf.layers.conv2d(inputs=self.minimap_input, filters=4, kernel_size=5, padding='same', activation=tf.nn.relu)
-        mm_image = tf.layers.conv2d(inputs=mm_image, filters=8, kernel_size=3, padding='same', activation=tf.nn.relu)
+        actor_net = tf.layers.dense(inputs=conv_net, units=256, activation=tf.nn.relu,
+                                    kernel_initializer=init, name='dense1')
 
-        mm_image = tf.contrib.layers.flatten(mm_image)
+        self.output = tf.layers.dense(inputs=actor_net, units=self.num_actions, activation=tf.nn.softmax)
 
-        a_image = tf.layers.conv2d(inputs=self.army_selected, filters=4, kernel_size=5, padding='same', activation=tf.nn.relu)
-        a_image = tf.layers.conv2d(inputs=a_image, filters=8, kernel_size=3, padding='same', activation=tf.nn.relu)
-
-        a_image = tf.contrib.layers.flatten(a_image)
-
-        combined_net = tf.concat([conv_net, mm_image, a_image], axis=1)
-
-        net = tf.layers.dense(inputs=combined_net, units=256, activation=tf.nn.relu, kernel_initializer=init, name='dense1')
-
-        self.output = tf.layers.dense(inputs=net, units=self.num_actions, activation=tf.nn.softmax)
-
-        loss = tf.reduce_mean(tf.log(tf.reduce_sum(tf.multiply(self.output, self.actor_actions))) * self.td_error)
-        # ent = tf.reduce_sum(tf.log(self.output))
-        # loss += 0.001 * ent
+        loss = tf.log(tf.reduce_sum(tf.multiply(self.output, self.actor_actions))) * self.td_error
+        entropy = tf.reduce_sum(tf.multiply(self.output, tf.log(self.output)))
+        loss += 0.001 * entropy
 
         self.optimiser = tf.train.AdamOptimizer(self.actor_lr).minimize(-loss)
 
@@ -118,7 +105,7 @@ class ActorCriticModel():
         self.critic_td_target = tf.placeholder(tf.float32, shape=[None, 1], name='rewards')
         self.critic_lr = critic_lr
 
-        critic_net = tf.layers.dense(inputs=combined_net, units=256, activation=tf.nn.relu, kernel_initializer=init)
+        critic_net = tf.layers.dense(inputs=conv_net, units=256, activation=tf.nn.relu, kernel_initializer=init)
         self.critic_output = tf.layers.dense(inputs=critic_net, units=1, activation=None, kernel_initializer=init)
 
         self.critic_loss = tf.reduce_mean(tf.squared_difference(self.critic_output, self.critic_td_target))
@@ -134,181 +121,69 @@ class ActorCriticModel():
             print('No model found - training new one')
 
     def train(self):
+        if len(self.memory.memory) < self.memory.batch_size:
+            return
 
-        states, mini_map, army, actions, rewards, done = self.memory.get_batch()
+        mini_batch = self.memory.get_batch()
 
         td_targets = []
         td_errors = []
 
-        # states = [item[0][0] for item in mini_batch]
-        # mini_map = [item[0][1] for item in mini_batch]
-        # army = [item[0][2] for item in mini_batch]
-        # actions = [item[1] for item in mini_batch]
-        # rewards = [item[2] for item in mini_batch]
-        # done = [item[3] for item in mini_batch]
+        army = [item[0] for item in mini_batch]
+        actions = [item[1] for item in mini_batch]
+        rewards = [item[2] for item in mini_batch]
+        done = [item[3] for item in mini_batch]
+        next_states = [item[4] for item in mini_batch]
 
-        values = self.batch_predict(states, mini_map, army)
-
-        last_value = self.predict(states[-1], mini_map[-1], army[-1])
-        value_target = np.zeros(len(done), dtype=np.float32)
-        value_target[-1] = last_value
-
-        # for i in range(len(done)):
-        #     value_target[i] = rewards[i] + self.gamma * value_target[i-1]
+        values = self.batch_predict(army)
 
         for i in range(len(done)):
             if done[i]:
                 td_targets.append([rewards[i]])
             else:
-                td_targets.append(rewards[i] + self.gamma * values[i+1])
+                td_targets.append(rewards[i] + self.gamma * self.predict(next_states[i]))
 
             td_errors.append(td_targets[-1] - values[i])
 
         # Training the critic
         self.session.run(self.critic_optimise, feed_dict={
-            self.input: states,
-            self.minimap_input: mini_map,
             self.army_selected: army,
             self.critic_td_target: td_targets
         })
 
         # Training the actor
         self.session.run(self.optimiser, feed_dict={
-            self.input: states,
-            self.minimap_input: mini_map,
             self.army_selected: army,
             self.actor_actions: actions,
             self.td_error: td_errors
         })
 
-        # del self.memory.memory[:]
-        self.memory.delete()
+    def run(self, army):
+        return self.session.run(self.output, feed_dict={self.army_selected: [army]})[0]
 
-    def run(self, state, mini_map, army):
-        return self.session.run(self.output, feed_dict={self.input: [state], self.minimap_input: [mini_map],
-                                                        self.army_selected: [army]})[0]
+    def batch_predict(self, army):
+        return self.session.run(self.critic_output, feed_dict={self.army_selected: army})
 
-    def get_action(self, obs):
-        obs = obs[0]
-
-        # Current observable state
-        screen_player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
-        current_state = screen_player_relative.flatten()
-        mm_player_relative = obs.observation['minimap'][_MM_PLAYER_RELATIVE]
-
-        army_selected = np.array([1]) if 1 in obs.observation['screen'][_SELECT] else np.array([0])
-
-        legal_actions = obs.observation['available_actions']
-
-        feed_dict = {self.input: [current_state],
-                     self.army_selected: [army_selected]}
-
-        output = self.session.run(self.output, feed_dict)[0]
-        out = self.redistribute(output, legal_actions)
-
-        try:
-            action = np.argmax(np.random.multinomial(1, out))
-        except ValueError:
-            action = np.argmax(np.random.multinomial(1, out / (1 + 1e-6)))
-        action = int(action)
-
-        # The group of actions to take
-        if available_actions[action] == _NO_OP:
-            return actions.FunctionCall(_NO_OP, [])
-        elif available_actions[action] == _SELECT_ARMY:
-            return actions.FunctionCall(_SELECT_ARMY, [_SELECT_ALL])
-        elif available_actions[action] == _ATTACK_SCREEN \
-                or available_actions[action] == _MOVE_SCREEN \
-                or available_actions[action] == _PATROL_SCREEN \
-                or available_actions[action] == _SMART_SCREEN:
-            # This is the scripted one
-            neutral_y, neutral_x = (screen_player_relative == _PLAYER_NEUTRAL).nonzero()
-            target = [int(neutral_x.mean()), int(neutral_y.mean())]
-            return actions.FunctionCall(available_actions[action], [_NOT_QUEUED, target])
-        elif available_actions[action] == _STOP_QUICK:
-            return actions.FunctionCall(available_actions[action], [_NOT_QUEUED])
-        elif available_actions[action] == _HOLD_POSITION_QUICK:
-            return actions.FunctionCall(available_actions[action], [_NOT_QUEUED])
-        elif available_actions[action] == _ATTACK_MINIMAP \
-                or available_actions[action] == _MOVE_MINIMAP \
-                or available_actions[action] == _PATROL_MINIMAP \
-                or available_actions[action] == _SMART_MINIMAP:
-            neutral_y, neutral_x = (mm_player_relative == _PLAYER_NEUTRAL).nonzero()
-            target = [int(neutral_x.mean()), int(neutral_y.mean())]
-            return actions.FunctionCall(available_actions[action], [_NOT_QUEUED, target])
-        else:
-            return actions.FunctionCall(_NO_OP, [])
-
-    def batch_predict(self, states, mini_map, army):
-        return self.session.run(self.critic_output, feed_dict={self.input: states, self.minimap_input: mini_map,
-                                                               self.army_selected: army})
-
-    def predict(self, state, mini_map, army):
-        return self.session.run(self.critic_output, feed_dict={self.input: [state], self.minimap_input: [mini_map],
-                                                               self.army_selected: [army]})[0]
+    def predict(self, next_army):
+        return self.session.run(self.critic_output, feed_dict={self.army_selected: [next_army]})[0]
 
     def save(self):
         self.saver.save(self.session, '/home/rob/Documents/uni/fyp/sc2/ac_model.ckpt')
 
-    # Defines if we have the potential of picking an illegal action and how we redistribute the probabilities
-    @staticmethod
-    def redistribute(output, legal_actions):
-        for i, action in enumerate(available_actions):
-            if action not in legal_actions:
-                output[i] = 0
-        if sum(output) == 0:
-            for i, a in enumerate(available_actions):
-                if a in legal_actions:
-                    output[i] = float(1/len(legal_actions))
-        else:
-            output /= sum(output)
-        return output
-
 
 class ReplayMemory:
-    def __init__(self, batch_size, max_memory_size):
+    def __init__(self, batch_size, max_memory_size=2000):
         self.batch_size = batch_size
-        # self.memory = []
-        self.states = []
-        self.minimap_states = []
-        self.army_selected = []
-        self.actions = []
-        self.advantages = []
-        self.done = []
+        self.memory = deque(maxlen=max_memory_size)
 
     def add(self, state, action, reward, done):
-        max_time_steps = 40
-        self.states = state[0][:max_time_steps]
-        self.minimap_states = state[1][:max_time_steps]
-        self.army_selected = state[2][:max_time_steps]
-        self.actions = action[:max_time_steps]
-        self.advantages = reward[:max_time_steps]
-        self.done = done[:max_time_steps]
-        self.done[-1] = True
+        self.memory.append([state, action, reward, done, None])
 
-    # Update the memory to include the next state
-    # def update(self, next_state, next_army, done):
-    #     if len(self.memory) > 0 and not self.memory[-1][4]:
-    #         self.memory[-1][4] = done
-    #         self.memory[-1][5] = next_state
-    #         self.memory[-1][6] = next_army
+    def update(self, next_state):
+        if len(self.memory) > 0:
+            if not self.memory[-1][3]:
+                self.memory[-1][4] = next_state
 
     def get_batch(self):
-        # self.memory.reverse()
-        # running_add = 0
-        # for m, mem in enumerate(self.memory):
-        #     _, _, _, r, d, _, _ = mem
-        #     running_add = running_add * 0.99 + r
-        #     mem[3] = running_add
-        # self.memory.reverse()
-        # self.advantages = (self.advantages - np.mean(self.advantages)) // (np.std(self.advantages) + 1e-10)
-        return self.states, self.minimap_states, self.army_selected, self.actions, self.advantages, self.done
-
-    def delete(self):
-        del self.states[:]
-        del self.minimap_states[:]
-        del self.army_selected[:]
-        del self.actions[:]
-        self.advantages = []
-        del self.done[:]
+        return random.sample(self.memory, self.batch_size)
 

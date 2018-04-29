@@ -143,9 +143,9 @@ class MoveToBeacon(base_agent.BaseAgent):
                     np.mean(self.total_rewards))
                 )
                 print(self.actions_taken)
-            if self.episodes % 500 == 0 and self.episodes > 0:
-                pickle.dump(self.total_actions, open('/home/rob/Documents/uni/fyp/sc2/actions5.pkl', 'wb'))
-                pickle.dump(self.rewards, open('/home/rob/Documents/uni/fyp/sc2/rewards5.pkl', 'wb'))
+            if self.episodes % 1000 == 0 and self.episodes > 0:
+                pickle.dump(self.total_actions, open('/home/rob/Documents/uni/fyp/sc2/actions8.pkl', 'wb'))
+                pickle.dump(self.rewards, open('/home/rob/Documents/uni/fyp/sc2/rewards8.pkl', 'wb'))
                 exit(0)
 
         if self.epsilon > self.final_epsilon:

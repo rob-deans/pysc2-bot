@@ -64,6 +64,7 @@ class Model:
         loss = tf.log(tf.reduce_sum(tf.multiply(self._acts, self.output))) * self._advantages
         self._train = tf.train.AdamOptimizer(learning_rate).minimize(-loss)
 
+        self.saver = tf.train.Saver()
         self.session = tf.Session(config=tf.ConfigProto(log_device_placement=True))
         self.session.run(tf.global_variables_initializer())
 
@@ -84,6 +85,9 @@ class Model:
                                                         self.minimap_input: [minimap],
                                                         self.army_input: [army]}
                                 )
+
+    def save(self):
+        self.saver.save(self.session, './policy_model.ckpt')
 
 
 class ReplayMemory:
