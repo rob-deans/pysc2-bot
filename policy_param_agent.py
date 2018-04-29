@@ -41,6 +41,7 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.rewards = []
 
         # Stat count
+        self.log_rewards = []
         self.total_rewards = []
         self.total_actions = []
         self.current_reward = 0
@@ -82,7 +83,6 @@ class MoveToBeacon(base_agent.BaseAgent):
             target_y = action_ % 64
 
             target = [target_x, target_y]
-            self.targets.append(target)
 
             self.states.append(current_state)
             actions_oh = np.zeros(self.num_actions)
