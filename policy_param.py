@@ -4,7 +4,8 @@ import random
 
 
 class Model:
-    def __init__(self, input_flat, action_size, learning_rate, memory):
+    def __init__(self, wh, input_flat, action_size, learning_rate, memory):
+        self.wh = wh
         self.input_flat = input_flat
         self.num_actions = action_size
         self.memory = memory
@@ -14,30 +15,14 @@ class Model:
 
         init = tf.random_normal_initializer
 
-        # create the network
-        net = self.screen_input
+        image = tf.reshape(self.screen_input, [-1, self.wh, self.wh, 1])
 
-        hidden1 = tf.contrib.layers.fully_connected(
-            inputs=net,
-            num_outputs=512,
-            activation_fn=tf.nn.relu,
-            weights_initializer=init
-        )
+        net = tf.contrib.layers.conv2d(inputs=image, num_outputs=16, kernel_size=5, padding='same', activation_fn=tf.nn.relu)
+        conv_net = tf.contrib.layers.conv2d(inputs=net, num_outputs=32, kernel_size=3, padding='same', activation_fn=tf.nn.relu)
 
-        hidden2 = tf.contrib.layers.fully_connected(
-            inputs=hidden1,
-            num_outputs=256,
-            activation_fn=tf.nn.relu,
-            weights_initializer=init
-        )
+        logits = tf.contrib.layers.conv2d(conv_net, num_outputs=1, kernel_size=1, activation_fn=None)
 
-        logits = tf.contrib.layers.fully_connected(
-            inputs=hidden2,
-            num_outputs=self.num_actions,
-            activation_fn=tf.nn.softmax
-        )
-
-        self.output = logits
+        self.output = tf.nn.softmax(tf.contrib.layers.flatten(logits))
 
         # training part of graph
         self._acts = tf.placeholder(tf.float32)
@@ -45,6 +30,8 @@ class Model:
 
         # loss function
         loss = tf.log(tf.reduce_sum(tf.multiply(self._acts, self.output))) * self._advantages
+        # entropy = tf.reduce_sum(tf.multiply(self.output, tf.log(tf.clip_by_value(self.output, 1e-12, 1.))))
+        # loss += 0.001 * tf.reduce_mean(entropy)
         self._train = tf.train.AdamOptimizer(learning_rate).minimize(-loss)
 
         self.saver = tf.train.Saver()
@@ -52,7 +39,6 @@ class Model:
         self.session.run(tf.global_variables_initializer())
 
     def train(self):
-        print('== TRAINING ==')
         states, actions, advantages = self.memory.get()
         self.session.run(self._train, feed_dict={
                             self.screen_input: states,

@@ -80,21 +80,20 @@ class ActorCriticModel:
 
         self.actor_lr = actor_lr
 
-        image = tf.reshape(self.army_selected, [-1, self.wh, self.wh, 1])
+        image = tf.reshape(self.army_selected, [-1, self.wh, self.wh, 3])
 
-        conv_net = tf.layers.conv2d(inputs=image, filters=16, kernel_size=5, padding='same', activation=tf.nn.relu)
-        conv_net = tf.layers.conv2d(inputs=conv_net, filters=32, kernel_size=3, padding='same', activation=tf.nn.relu)
+        net = tf.contrib.layers.conv2d(inputs=image, num_outputs=16, kernel_size=5, padding='same',
+                                       activation_fn=tf.nn.relu)
+        conv_net = tf.contrib.layers.conv2d(inputs=net, num_outputs=32, kernel_size=3, padding='same',
+                                            activation_fn=tf.nn.relu)
 
-        conv_net = tf.contrib.layers.flatten(conv_net)
+        logits = tf.contrib.layers.conv2d(conv_net, num_outputs=1, kernel_size=1, activation_fn=None)
 
-        actor_net = tf.layers.dense(inputs=conv_net, units=256, activation=tf.nn.relu,
-                                    kernel_initializer=init, name='dense1')
-
-        self.output = tf.layers.dense(inputs=actor_net, units=self.num_actions, activation=tf.nn.softmax)
+        self.output = tf.nn.softmax(tf.contrib.layers.flatten(logits))
 
         loss = tf.log(tf.reduce_sum(tf.multiply(self.output, self.actor_actions))) * self.td_error
-        entropy = tf.reduce_sum(tf.multiply(self.output, tf.log(self.output)))
-        loss += 0.001 * entropy
+        # entropy = tf.reduce_sum(tf.multiply(self.output, tf.log(self.output)))
+        # loss += 0.001 * entropy
 
         self.optimiser = tf.train.AdamOptimizer(self.actor_lr).minimize(-loss)
 

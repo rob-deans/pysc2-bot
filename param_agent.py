@@ -60,7 +60,11 @@ class MoveToBeacon(base_agent.BaseAgent):
 
         player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
         current_state = player_relative.flatten()
-        current_state = [1 if c == 3 else 0 for c in current_state]
+        # current_state = [1 if c == 3 else 0 for c in current_state]
+
+        if len(self.memory.memory) > 0:
+            self.memory.update(current_state)
+            self.model.train()
 
         super(MoveToBeacon, self).step(obs)
 
@@ -84,7 +88,7 @@ class MoveToBeacon(base_agent.BaseAgent):
             target_x = action_ // 64
             target_y = action_ % 64
 
-            target = [target_x, target_y]
+            target = [target_y, target_x]
             self.targets.append(target)
 
             reward = obs.reward
@@ -120,7 +124,7 @@ class MoveToBeacon(base_agent.BaseAgent):
             actions_oh = np.zeros(self.num_actions)
             actions_oh[action_] = 1
             self.memory.add(current_state, actions_oh, reward, done)
-            self.model.train()
+            # self.model.train()
 
             return actions.FunctionCall(_MOVE_SCREEN, [_NOT_QUEUED, target])
         else:

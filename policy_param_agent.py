@@ -5,7 +5,7 @@ from __future__ import print_function
 from policy_param import ReplayMemory
 from policy_param import Model
 import numpy as np
-
+from collections import deque
 from pysc2.agents import base_agent
 from pysc2.lib import actions
 from pysc2.lib import features
@@ -32,9 +32,9 @@ class MoveToBeacon(base_agent.BaseAgent):
         self.num_actions = self.wh ** 2
         self.input_flat = self.wh ** 2  # Size of the screen
 
-        self.batch_size = 10
+        self.batch_size = 1
         self.gamma = .99
-        self.learning_rate = 1e-3
+        self.learning_rate = 1e-2
 
         self.actions = []
         self.states = []
@@ -42,20 +42,19 @@ class MoveToBeacon(base_agent.BaseAgent):
 
         # Stat count
         self.log_rewards = []
-        self.total_rewards = []
+        self.total_rewards = deque(maxlen=100)
         self.total_actions = []
         self.current_reward = 0
-        self.actions_taken = np.zeros(self.num_actions)
 
         self.memory = ReplayMemory()
-        self.model = Model(self.input_flat, self.num_actions, self.learning_rate, self.memory)
+        self.model = Model(self.wh, self.input_flat, self.num_actions, self.learning_rate, self.memory)
     """An agent specifically for solving the MoveToBeacon map."""
 
     def step(self, obs):
 
         player_relative = obs.observation["screen"][_PLAYER_RELATIVE]
         current_state = player_relative.flatten()
-        current_state = [1 if c == 3 else 0 for c in current_state]
+        # current_state = [1 if c == 3 else 0 for c in current_state]
 
         super(MoveToBeacon, self).step(obs)
 
@@ -82,7 +81,7 @@ class MoveToBeacon(base_agent.BaseAgent):
             target_x = action_ // 64
             target_y = action_ % 64
 
-            target = [target_x, target_y]
+            target = [target_y, target_x]
 
             self.states.append(current_state)
             actions_oh = np.zeros(self.num_actions)
